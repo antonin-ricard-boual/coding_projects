@@ -1,0 +1,144 @@
+---
+title: "R projects"
+format: html
+editor: visual
+---
+
+## Using APIs
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+```{r}
+install.packages("WDI")
+library(WDI)
+
+library(httr2)
+library(jsonlite)
+library(dplyr)
+library(tidyr)
+library(readr)
+```
+
+Creating an API wrapper for world bank data, and importing data of health expenditures per capita and as a % of GDP
+
+```{r}
+
+WorldBankApiWrapper <- function(indicator, country, time_period_from, time_period_to, database_id = "WB_WDI") {
+
+    root_endpoint <- "https://data360api.worldbank.org/data360/data"
+
+    query_string <- paste0(
+        root_endpoint,
+        "?DATABASE_ID=",    database_id,
+        "&INDICATOR=",      indicator,
+        "&REF_AREA=",       country,
+        "&timePeriodFrom=", time_period_from,
+        "&timePeriodTo=",   time_period_to
+    )
+
+    req <- request(query_string)
+
+    resp <- req_perform(req)
+
+    if (resp_status(resp) != 200) {
+        warning("Request failed")
+        return(list(value = list(list(OBS_VALUE = NA))))
+    }
+
+    else {
+        data <- resp_body_json(resp)
+
+        if (!is.list(data) || is.null(data$value) || length(data$value) == 0) {
+            warning("Missing data structure")
+            return(data)
+        }
+
+        else {
+            return(data)
+        }
+    }
+}
+
+# Retrieve and import data on healthcare expenditures for albania from 2000 to 2023
+
+health_expenditure_per_capita <- WorldBankApiWrapper("WB_WDI_SH_XPD_CHEX_PC_CD", "ALB", "2000", "2023")
+health_expenditure_percent_gdp <- WorldBankApiWrapper("WB_WDI_SH_XPD_CHEX_GD_ZS", "ALB", "2000", "2023")
+```
+
+Checking the quality of the data:
+
+#### World Bank: Current Health Expenditure per Capita in USD:
+
+1.  **Definition:** This indicator calculates the current health expenditure spent per person in USD. This is how the indicator is calculated: Current Health Expenditures / (Population \* Exchange Rate). Current health expenditures (CHE) are defined as the total of all current health spending across all financing schemes.
+
+It is calculated as the sum of government & compulsory schemes and voluntary schemes + household out-of-pocket + rest of the world + and other unspecified financing schemes.
+
+Population (POP) as used in the indicator is the de facto number of people in a country, area, or region as of July of every year. For OECD and Eurostat member states, WHO uses the same macroeconomic data as these organizations, otherwise for other countries the data from the UN population division is used.
+
+All of the information above is sourced from the WHO Global Health expenditures methodology document: https://www.who.int/publications/i/item/9789240112001.
+
+2.  **Units:** The units are USD per capita. Keeping into account that the exchange rate used to convert the foreign currency into USD is the value of a national currency in terms of another currency (US dollars in GHED). Given that exchange rates can fluctuate significantly over time, an annual average is used for the purpose of constructing indicators.
+
+3.  **Data Quality:** As seen above, the WHO compiles the indicators with data from reliable sources. In addition, to check the quality of the data, we conducted a number of smell tests below and used the WDI package from the world bank that source the WHO indicators for ease of use.
+
+4.  **Unit of Observation:** Every observation corresponds to a country in a given year.
+
+5.  **Time Structure:** The dataset follows a panel structure, observing the same set of countries repeatedly across the 2000-2023 period.
+
+**Smell Tests for "Data Quality" Characteristic:** We conducted comprehensive data quality checks and identified 921 missing values (NA) out of 6384 observations. While this initially appears concerning, further investigation reveals systematic patterns:
+
+-   26 small states/territories (e.g., Cayman Islands, Aruba) consistently lack data collection systems
+-   78 historical gaps from countries that began reporting after 2000 (e.g., Iraq, Montenegro)
+-   245 missing 2023 values across reporting countries - expected as this data is still being updated
+
+The calculation confirms our assessment: (26 × 23 years) + 78 historical gaps + 245 recent missing = 921 total NAs. - 2023 missingness is non-problematic (outside our 2000-2022 analysis scope) - Non-reporting territories can be excluded without bias concerns - Late-reporting countries would require careful handling in time-series analysis.
+
+Secondly, there are no duplicates, which shows that the dataset is overall clean and well-structured. The dataset reveals health expenditure values ranging from 4.176 to 12434.43 USD per capita. We consider both extremes plausible within a global context: lower values (\<20) align with expected patterns in economically constrained developing regions, while the upper range (\>10000) is almost exclusively observed in small island states (Tuvalu, Nauru, Marshall Islands), likely reflecting unique economic structures and healthcare challenges.
+
+```{r}
+# We use the WDI library to access the World Bank’s open data repository
+health_expenditure_per_capita_1 <- WDI(
+    country = "all",
+    indicator = "SH.XPD.CHEX.PC.CD",
+    start = 2000,
+    end = 2023,
+    extra = FALSE,
+    cache = NULL,
+    latest = NULL,
+    language = "en"
+)
+
+# We rename the column names in order to improve readability
+names(health_expenditure_per_capita_1) <- c("country", "iso_code", "region", "year", "usd_per_capita")
+
+# We print the first 10 rows to have an overview on the data
+print(head(health_expenditure_per_capita_1, 10))
+
+## Keep only rows with country, year
+health_expenditure_per_capita_1 <- health_expenditure_per_capita_1[!is.na(health_expenditure_per_capita_1$country) & !is.na(health_expenditure_per_capita_1$year), ]
+
+cat("\n Missingness \n")
+
+cat("Total NA values:", sum(is.na(health_expenditure_per_capita_1$usd_per_capita)), "\n")
+
+cat("\n Range & Plausibility \n")
+
+rng <- range(health_expenditure_per_capita_1$usd_per_capita, na.rm = TRUE)
+cat("Range:", rng[1], "to", rng[2], "\n")
+
+plaus <- subset(health_expenditure_per_capita_1, !is.na(usd_per_capita) & (usd_per_capita < 20 | usd_per_capita > 10000))
+cat("Out-of-band (<20 or >10000):", nrow(plaus), "\n")
+
+
+# Printing a table that indicates the data that is out-of-band
+subset(health_expenditure_per_capita_1,
+    !is.na(usd_per_capita) & usd_per_capita < 20,
+    select = c(country, year, usd_per_capita)
+)
+
+dup_key <- duplicated(paste(health_expenditure_per_capita_1$country, health_expenditure_per_capita_1$year))
+
+cat("Duplicate rows:", sum(dup_key), "\n")
+
+
+```
