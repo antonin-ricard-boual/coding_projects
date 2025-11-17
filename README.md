@@ -1,4 +1,4 @@
-This repo contains two small proejcts:
+This repo contains two small projects:
 
 Python project: cleans and prepares Airbnb data, explores patterns, and tests a few simple models to predict prices.
 
